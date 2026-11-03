@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0e1117">
+<title>myLUAS · Live tram times</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #171b24;
+    --panel-2: #1f2430;
+    --ink: #f3f5f9;
+    --muted: #8b93a7;
+    --line: rgba(255,255,255,.08);
+    --red: #e4002b;
+    --green: #00a651;
+    --accent: var(--green);
+    --amber: #ffc94a;
+    --err-bg: #3a1418;
+    --err-ink: #ffb4bd;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    width: 100%;
+    max-width: 640px;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    padding: calc(18px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    gap: 16px;
+  }
+
+  /* ---------- Header ---------- */
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark {
+    width: 38px; height: 38px; border-radius: 11px;
+    background: linear-gradient(135deg, var(--red) 0 50%, var(--green) 50% 100%);
+    display: grid; place-items: center;
+  }
+  .brand-mark svg { width: 22px; height: 22px; }
+  .brand h1 { font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em; }
+  .brand h1 span { color: var(--accent); transition: color .3s; }
+  .status {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: .78rem; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .status .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); flex-shrink: 0;
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 2s infinite;
+  }
+  .status.loading .dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .status.error .dot   { background: var(--red);   box-shadow: 0 0 8px var(--red); animation: none; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ---------- Stop picker ---------- */
+  .picker { position: relative; }
+  .picker label {
+    display: block; font-size: .72rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .12em;
+    color: var(--muted); margin: 0 0 6px 4px;
+  }
+  select {
+    width: 100%;
+    appearance: none; -webkit-appearance: none;
+    font: inherit; font-size: 1.1rem; font-weight: 600;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 6px solid var(--accent);
+    border-radius: 14px;
+    padding: 15px 44px 15px 16px;
+    cursor: pointer;
+    transition: border-color .3s;
+  }
+  select:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .picker::after {
+    content: ""; position: absolute; right: 18px; bottom: 23px;
+    width: 9px; height: 9px;
+    border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg); pointer-events: none;
+  }
+
+  /* ---------- Stop title ---------- */
+  .stop-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 2px 4px; }
+  .stop-title h2 { font-size: clamp(1.6rem, 7vw, 2.2rem); font-weight: 800; letter-spacing: -.02em; }
+  .line-badge {
+    font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  /* ---------- Message ---------- */
+  .message {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: .93rem; line-height: 1.45;
+    color: #d5dae6;
+  }
+  .message svg { width: 20px; height: 20px; flex-shrink: 0; margin-top: 1px; stroke: var(--amber); }
+
+  .error-box {
+    background: var(--err-bg);
+    color: var(--err-ink);
+    border: 1px solid rgba(255, 120, 135, .35);
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: .93rem; line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .error-box strong { color: #fff; display: block; margin-bottom: 2px; }
+
+  /* ---------- Directions ---------- */
+  .directions { display: grid; gap: 14px; }
+  @media (min-width: 600px) { .directions { grid-template-columns: 1fr 1fr; } }
+
+  .dir {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  .dir h3 {
+    font-size: .78rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted);
+    padding: 14px 16px 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dir h3::before {
+    content: ""; width: 14px; height: 3px; border-radius: 2px; background: var(--accent);
+  }
+  .tram {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+  }
+  .tram:first-of-type { background: var(--panel-2); }
+  .dest { font-size: 1.08rem; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+  .due {
+    display: flex; align-items: baseline; gap: 4px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .due b { font-size: 2.4rem; font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+  .due small { font-size: .85rem; color: var(--muted); font-weight: 600; }
+  .due.now b {
+    font-size: 1.7rem; color: var(--amber);
+    animation: pulse 1.2s infinite;
+  }
+  .empty { padding: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: .95rem; }
+
+  /* Skeleton while first loading */
+  .skeleton { height: 210px; border-radius: 18px; background: linear-gradient(90deg, var(--panel) 0%, var(--panel-2) 50%, var(--panel) 100%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* ---------- Footer ---------- */
+  footer {
+    margin-top: auto;
+    padding-top: 8px;
+    text-align: center;
+    font-size: .78rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .refresh-btn {
+    font: inherit; font-size: .85rem; font-weight: 600;
+    color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 9px 16px; cursor: pointer;
+    justify-self: center;
+  }
+  .refresh-btn:hover { background: var(--panel-2); }
+
+  .stale { opacity: .45; filter: grayscale(.6); }
+  .hidden { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="4" width="14" height="13" rx="3"/>
+            <path d="M5 11h14M9 21l1.5-4M15 21l-1.5-4M9 2h6"/>
+            <circle cx="9" cy="14" r=".6" fill="#fff"/><circle cx="15" cy="14" r=".6" fill="#fff"/>
+          </svg>
+        </div>
+        <h1>my<span>LUAS</span></h1>
+      </div>
+      <div id="status" class="status loading" aria-live="polite">
+        <span class="dot"></span><span id="statusText">Loading…</span>
+      </div>
+    </header>
+
+    <div class="picker">
+      <label for="stop">My stop</label>
+      <select id="stop" aria-label="Choose your Luas stop">
+        <option value="MYS">Loading stops…</option>
+      </select>
+    </div>
+
+    <div id="stopsError" class="error-box hidden" role="alert"></div>
+
+    <div class="stop-title">
+      <h2 id="stopName">—</h2>
+      <span id="lineBadge" class="line-badge hidden"></span>
+    </div>
+
+    <div id="message" class="message hidden">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+      </svg>
+      <span id="messageText"></span>
+    </div>
+
+    <div id="forecastError" class="error-box hidden" role="alert"></div>
+
+    <section id="directions" class="directions" aria-live="polite">
+      <div class="skeleton"></div>
+      <div class="skeleton"></div>
+    </section>
+
+    <button id="refreshBtn" class="refresh-btn" type="button">↻ Refresh now</button>
+
+    <footer>
+      Data: Transport Infrastructure Ireland. Built by Priyadharshini for BDAIB.
+    </footer>
+  </div>
+
+<script>
+  const API = "https://luas-class.kluxy.app";
+  const STORAGE_KEY = "myluas-stop";
+  const DEFAULT_STOP = "MYS";
+  const REFRESH_MS = 20000;
+
+  const el = id => document.getElementById(id);
+  const select = el("stop");
+  let stopsById = {};
+  let timer = null;
+  let requestId = 0;
+
+  // ---------- localStorage (wrapped: it can be blocked in some browsers) ----------
+  function loadStop() {
+    try { return localStorage.getItem(STORAGE_KEY) || DEFAULT_STOP; }
+    catch { return DEFAULT_STOP; }
+  }
+  function saveStop(id) {
+    try { localStorage.setItem(STORAGE_KEY, id); } catch { /* ignore */ }
+  }
+
+  // ---------- Helpers ----------
+  function timeNow() {
+    const d = new Date();
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
+  }
+
+  function setStatus(kind, text) {
+    el("status").className = "status " + kind;
+    el("statusText").textContent = text;
+  }
+
+  function showError(box, title, err) {
+    box.innerHTML = "";
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    box.appendChild(strong);
+    box.appendChild(document.createTextNode(err && err.message ? err.message : String(err)));
+    box.classList.remove("hidden");
+  }
+
+  function setLineColour(line) {
+    const colour = line === "red" ? "var(--red)" : "var(--green)";
+    document.documentElement.style.setProperty("--accent", colour);
+    const badge = el("lineBadge");
+    if (line === "red" || line === "green") {
+      badge.textContent = line === "red" ? "Red Line" : "Green Line";
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+  }
+
+  async function getJSON(url) {
+    let res;
+    try {
+      res = await fetch(url, { cache: "no-store" });
+    } catch (e) {
+      throw new Error("Network error, could not reach " + url + " (" + e.message + ")");
+    }
+    const raw = await res.text();
+    if (!res.ok) throw new Error("HTTP " + res.status + " from " + url + (raw ? ": " + raw.slice(0, 200) : ""));
+    try { return JSON.parse(raw); }
+    catch { throw new Error("Response from " + url + " was not valid JSON."); }
+  }
+
+  // ---------- 1. Stops dropdown ----------
+  async function loadStops(selected) {
+    try {
+      const data = await getJSON(API + "/stops");
+      if (!data || !Array.isArray(data.stops)) throw new Error('The stop list had no "stops" array.');
+
+      const groups = { red: [], green: [] };
+      for (const s of data.stops) {
+        stopsById[s.id] = s;
+        if (groups[s.line]) groups[s.line].push(s);
+      }
+
+      select.innerHTML = "";
+      [["red", "Red Line"], ["green", "Green Line"]].forEach(([key, label]) => {
+        if (!groups[key].length) return;
+        const og = document.createElement("optgroup");
+        og.label = label;
+        groups[key].forEach(s => {
+          const o = document.createElement("option");
+          o.value = s.id;
+          o.textContent = s.name;
+          og.appendChild(o);
+        });
+        select.appendChild(og);
+      });
+
+      if (stopsById[selected]) {
+        select.value = selected;
+      } else if (stopsById[DEFAULT_STOP]) {
+        select.value = DEFAULT_STOP;
+      }
+      el("stopsError").classList.add("hidden");
+    } catch (err) {
+      // Keep a usable dropdown with the saved stop so live times still work
+      select.innerHTML = "";
+      const o = document.createElement("option");
+      o.value = selected; o.textContent = selected;
+      select.appendChild(o);
+      showError(el("stopsError"), "Couldn't load the stop list.", err);
+    }
+    return select.value || selected;
+  }
+
+  // ---------- 2–4. Forecast ----------
+  function renderDirections(directions) {
+    const wrap = el("directions");
+    wrap.innerHTML = "";
+    if (!directions.length) {
+      const d = document.createElement("div");
+      d.className = "dir";
+      d.innerHTML = '<div class="empty">No direction information for this stop right now.</div>';
+      wrap.appendChild(d);
+      return;
+    }
+    directions.forEach(dir => {
+      const card = document.createElement("article");
+      card.className = "dir";
+      const h = document.createElement("h3");
+      h.textContent = dir.name || "Direction";
+      card.appendChild(h);
+
+      const trams = (Array.isArray(dir.trams) ? dir.trams : []).slice(0, 3);
+      if (!trams.length) {
+        const e = document.createElement("div");
+        e.className = "empty";
+        e.textContent = "No trams forecast.";
+        card.appendChild(e);
+      }
+      trams.forEach(t => {
+        const row = document.createElement("div");
+        row.className = "tram";
+
+        const dest = document.createElement("div");
+        dest.className = "dest";
+        dest.textContent = t.destination || "—";
+
+        const due = document.createElement("div");
+        const mins = Number(t.due);
+        const b = document.createElement("b");
+        if (t.due === 0 || mins === 0 || String(t.due).toUpperCase() === "DUE") {
+          due.className = "due now";
+          b.textContent = "Due";
+          due.appendChild(b);
+        } else {
+          due.className = "due";
+          b.textContent = Number.isFinite(mins) ? mins : String(t.due);
+          due.appendChild(b);
+          if (Number.isFinite(mins)) {
+            const s = document.createElement("small");
+            s.textContent = "min";
+            due.appendChild(s);
+          }
+        }
+        row.appendChild(dest);
+        row.appendChild(due);
+        card.appendChild(row);
+      });
+      wrap.appendChild(card);
+    });
+  }
+
+  async function loadForecast() {
+    const stop = select.value || DEFAULT_STOP;
+    const myId = ++requestId;               // ignore late replies for an old stop
+    setStatus("loading", "Updating…");
+
+    const known = stopsById[stop];
+    if (known) { el("stopName").textContent = known.name; setLineColour(known.line); }
+
+    try {
+      const data = await getJSON(API + "/forecast?stop=" + encodeURIComponent(stop));
+      if (myId !== requestId) return;
+      if (!data || typeof data !== "object") throw new Error("Forecast response was empty.");
+
+      el("stopName").textContent = data.stopName || (known ? known.name : stop);
+
+      const msg = (data.message || "").trim();
+      el("messageText").textContent = msg;
+      el("message").classList.toggle("hidden", !msg);
+
+      renderDirections(Array.isArray(data.directions) ? data.directions : []);
+      el("forecastError").classList.add("hidden");
+      el("directions").classList.remove("stale");
+      el("message").classList.remove("stale");
+      setStatus("ok", "Last updated " + timeNow());
+    } catch (err) {
+      if (myId !== requestId) return;
+      // Clear the loading skeleton if this was the first load; otherwise dim the old times
+      const hadOld = !el("directions").querySelector(".skeleton") && el("directions").children.length > 0;
+      if (!hadOld) el("directions").innerHTML = "";
+      el("directions").classList.toggle("stale", hadOld);
+      el("message").classList.toggle("stale", hadOld);
+      const note = hadOld ? "\nThe times below are from the last successful update and may be out of date." : "";
+      showError(el("forecastError"), "Couldn't load live trams.", new Error((err && err.message ? err.message : String(err)) + note));
+      setStatus("error", "Update failed " + timeNow());
+    }
+  }
+
+  function startTimer() {
+    clearInterval(timer);
+    timer = setInterval(loadForecast, REFRESH_MS);
+  }
+
+  // ---------- Events ----------
+  select.addEventListener("change", () => {
+    saveStop(select.value);
+    el("directions").innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+    loadForecast();
+    startTimer();
+  });
+
+  el("refreshBtn").addEventListener("click", () => { loadForecast(); startTimer(); });
+
+  // Refresh straight away when the user comes back to the tab
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") { loadForecast(); startTimer(); }
+  });
+
+  // ---------- Start ----------
+  (async function init() {
+    const saved = loadStop();
+    select.value = saved;
+    const stop = await loadStops(saved);
+    saveStop(stop);
+    await loadForecast();
+    startTimer();
+  })();
+</script>
+</body>
+</html>
